@@ -22,16 +22,11 @@ ME=$(basename $0)
 # Some sane defaults
 # Where to put the key files and config snippets
 BASEDIR=$(dirname $0)
-DNSKEYGEN="/usr/sbin/dnssec-keygen"
+TSIGKEYGEN="/usr/sbin/tsig-keygen"
 # Default action: immediate update of DNS record
 DEFACTION="UPDATE"
 TTL=300
-KEYBITS=512
-NSALGORITHM=165
-
-# List of usable algorithms
-NSALGORITHMS=",DH,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
-NSALGORITHMS="$NSALGORITHMS,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,hmac-md5,,,,hmac-sha1,hmac-sha224,,hmac-sha384,hmac-sha512,,,,"
+NSALGORITHM="hmac-sha512"
 
 # Function to call when we bail out
 die()
@@ -183,9 +178,7 @@ test -z "$DNSSERVER" && die "You must specify the DNS server I need to update (o
 DNSSERVER="${DNSSERVER%.}"
 DNSHOSTNAME="${DNSHOSTNAME%.}"
 DNSZONE=$(echo "$DNSHOSTNAME"|cut -d '.' -f 2-)
-test -z "$NSKEY" && NSKEY="$DNSHOSTNAME"
-# Might be a symlink. Read it
-test -L "$BASEDIR/$NSKEY.private" && NSKEY=$(readlink -f "$BASEDIR/$NSKEY.private")
+test -z "$NSKEY" && NSKEY="$BASEDIR/$DNSHOSTNAME.private"
 
 case "$DEFACTION" in
 	UPDATE)
@@ -206,20 +199,16 @@ case "$DEFACTION" in
 	    ) | nsupdate -k $NSKEY || exit $?
 	;;
 	KEYGEN)
-	    test -x $DNSKEYGEN || die "Cannot generate keypair: $DNSKEYGEN not found"
+	    test -x $TSIGKEYGEN || die "Cannot generate keypair: $TSIGKEYGEN not found"
 	    test -f "$NSKEY" && die "Key $NSKEY for hostname $DNSHOSTNAME already exist. You need to delete it"
 	    OLDPWD="$PWD"
 	    cd $BASEDIR
-	    KEYNAME="$($DNSKEYGEN -a $(echo "$NSALGORITHMS" | cut -d ',' -f $NSALGORITHM) -b $KEYBITS -n USER $DNSHOSTNAME)"
-	    ln -s "$KEYNAME.private" "$NSKEY.private"
-	    ln -s "$KEYNAME.key" "$NSKEY.key"
+#	    echo "$TSIGKEYGEN -a "$NSALGORITHM" $DNSHOSTNAME"
+	    $TSIGKEYGEN -a "$NSALGORITHM" $DNSHOSTNAME > "$NSKEY"
 	    # Create server-side configuration directory
 	    mkdir -p "$BASEDIR/$DNSSERVER/etc/bind/"
-            cat > $BASEDIR/$DNSSERVER/etc/bind/dynaname.conf <<EOF
-key $NSKEY {
-        algorithm $(echo "$NSALGORITHMS" | cut -d ',' -f $NSALGORITHM|tr a-z A-Z);
-        secret "`cut -d" " -f7- $NSKEY.key`";
-};
+	    cp "$NSKEY" $BASEDIR/$DNSSERVER/etc/bind/dynaname.conf
+            cat >> $BASEDIR/$DNSSERVER/etc/bind/dynaname.conf <<EOF
 
 zone "$DNSZONE" in {
         type master;
